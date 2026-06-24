@@ -1,0 +1,161 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[portuguese]{babel}
+\usepackage{amsmath, amsfonts, amssymb}
+\usepackage{graphicx}
+\usepackage{geometry}
+\geometry{a4paper, top=3cm, bottom=3cm, left=2.5cm, right=2.5cm}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{xcolor}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Relatório Caixeiro Viajante},
+}
+
+\title{
+    \vspace{-2cm}
+    \begin{center}
+        \Large \textbf{Centro Federal de Educação Tecnológica de Minas Gerais -- CEFET-MG}\\
+        \large Departamento de Computação\\
+        \vspace{1cm}
+        \textbf{Trabalho Prático 03: Algoritmos para o Problema do Caixeiro Viajante}\\
+        \normalsize Disciplina: Algoritmos e Estruturas de Dados II\\
+        \normalsize Professor: Thiago de Souza Rodrigues
+    \end{center}
+}
+
+\author{
+    \textbf{Caio César Nascimento Silva} \\
+    \textbf{Gabriel Macedo dos Santos Magalhães}
+}
+\date{23 de junho de 2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+    Este relatório documenta a implementação e a análise comparativa de três abordagens computacionais para a resolução do Problema do Caixeiro Viajante (TSP): Força Bruta (solução exata), Heurística do Vizinho Mais Próximo e Algoritmo Aproximado baseado em Árvore Geradora Mínima. Analisou-se o comportamento do crescimento exponencial no método exato, bem como o balanço entre custo da rota e eficiência assintótica nas abordagens heurísticas e aproximadas sobre instâncias de até 1.032 vértices.
+\end{abstract}
+
+\vspace{0.5cm}
+
+\tableofcontents
+\newpage
+
+\section{Introdução e Fundamentação Teórica}
+
+O Problema do Caixeiro Viajante (\textit{Traveling Salesperson Problem} - TSP) é um dos problemas mais clássicos e estudados na Ciência da Computação e na Pesquisa Operacional. O objetivo é determinar o menor ciclo hamiltoniano em um grafo, ou seja, o menor caminho que visita todos os vértices exatamente uma vez e retorna ao vértice de origem.
+
+Do ponto de vista da complexidade computacional, o problema de decisão associado ao TSP é classicamente conhecido como pertencente à classe NP-Completo. Em termos práticos, isso implica que não se conhece nenhum algoritmo capaz de resolvê-lo de forma ótima em tempo polinomial $O(n^k)$.
+
+O objetivo deste trabalho prático é investigar a fronteira da tratabilidade computacional e avaliar metodologias de mitigação. Para tal, implementamos três estratégias analíticas:
+\begin{enumerate}
+    \item \textbf{Solução Exata (Força Bruta)}: Avalia todas as permutações possíveis. Útil apenas para instâncias minúsculas, mas indispensável para compreender a explosão combinatória.
+    \item \textbf{Heurística Gulosa (Vizinho Mais Próximo)}: Uma heurística construtiva de tempo polinomial que toma decisões localmente ótimas na esperança de encontrar um bom resultado global.
+    \item \textbf{Algoritmo Aproximado (Árvore Geradora Mínima - MST)}: Fornece um limite superior de erro garantido matematicamente (neste caso, a garantia de que o custo encontrado não excederá $2 \times$ o custo ótimo para grafos que respeitam a desigualdade triangular).
+\end{enumerate}
+
+\section{Parte 1: Algoritmo Exato (Força Bruta)}
+
+O método de força bruta garante encontrar a rota de custo estritamente ótimo, inspecionando o espaço de busca em sua totalidade.
+
+\subsection{Processo de Raciocínio Analítico}
+Considerando um grafo completo com $n$ vértices, existem matematicamente $n!$ permutações para a ordem de visitação. No entanto, como o caminho deve formar um ciclo, podemos fixar um vértice de origem constante (eliminando as variações cíclicas idênticas). Assim, o número total de caminhos únicos a serem checados é reduzido para $(n-1)!$. Se as distâncias são simétricas, o espaço pode cair para $\frac{(n-1)!}{2}$, mas o comportamento assintótico permanece fatorial $O(n!)$.
+
+\subsection{Resultados e Análise da Explosão Exponencial}
+
+Executamos a rotina exata para instâncias randômicas de tamanhos de $n=2$ até $n=12$. Os resultados computacionais encontram-se na Tabela \ref{tab:forca-bruta}.
+
+\begin{table}[H]
+    \centering
+    \caption{Tempo de execução para Força Bruta ($n=2$ a $n=12$)}
+    \label{tab:forca-bruta}
+    \begin{tabular}{@{}rrrr@{}}
+    \toprule
+    \textbf{Vértices ($n$)} & \textbf{Permutações $(n-1)!$} & \textbf{Tempo (s)} & \textbf{Custo da Rota} \\ \midrule
+    2  & 1          & 0.000009  & 320   \\
+    3  & 2          & 0.000022  & 572   \\
+    4  & 6          & 0.000020  & 1,347 \\
+    5  & 24         & 0.000037  & 2,544 \\
+    6  & 120        & 0.000167  & 1,031 \\
+    7  & 720        & 0.000932  & 1,431 \\
+    8  & 5,040      & 0.007131  & 1,863 \\
+    9  & 40,320     & 0.065377  & 1,787 \\
+    10 & 362,880    & 0.623941  & 1,841 \\
+    11 & 3,628,800  & 6.241694  & 2,101 \\
+    12 & 39,916,800 & 74.479555 & 1,641 \\ \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Conclusão Analítica:} Conforme evidencia a Tabela \ref{tab:forca-bruta}, a transição de $n=11$ para $n=12$ aumenta o tempo de execução por um fator de 11 (de $\sim 6$ segundos para $\sim 74$ segundos), refletindo perfeitamente a propriedade $(n-1) \times (n-2)!$ da função fatorial.
+Se tentássemos resolver $n=15$, o tempo estimado saltaria para aproximadamente $74 \times 13 \times 14 \times 15$, resultando em dias de processamento. Este experimento reforça de maneira empírica o motivo pelo qual abordagens exatas em tempo polinomial são inatingíveis para problemas NP-Completos e por que precisamos recorrer a métodos aproximados e heurísticos.
+
+\begin{figure}[H]
+    \centering
+    % Observação para o aluno: Certifique-se de que o arquivo 'grafico_forca_bruta.png' gerado pelo código em Python esteja na mesma pasta do arquivo .tex no Overleaf.
+    \includegraphics[width=0.8\textwidth]{grafico_forca_bruta.png}
+    \caption{Crescimento exponencial do tempo de execução no Força Bruta}
+    \label{fig:grafico-fb}
+\end{figure}
+
+\section{Partes 2 e 3: Heurística e Algoritmo Aproximado}
+
+Para resolver instâncias grandes, as abordagens polinomiais são fundamentais. Implementamos duas metodologias contrastantes.
+
+\subsection{Heurística do Vizinho Mais Próximo (NN)}
+\textbf{Método:} A partir de um vértice inicial, o algoritmo seleciona sempre a próxima cidade não visitada que possua a menor distância (escolha gulosa local).
+\\
+\textbf{Por que funciona (e quando falha):} É rápido ($O(n^2)$) e intuitivo. Todavia, como não tem visão global, o Caixeiro pode ser forçado a tomar uma aresta extremamente longa nos passos finais para fechar o ciclo. Não oferece garantias matemáticas sobre o limite do erro.
+
+\subsection{Algoritmo Aproximado baseado em MST (2-Aprox)}
+\textbf{Método:} 
+1. Construímos uma Árvore Geradora Mínima (MST) do grafo (usando o algoritmo de Prim, com complexidade $O(n^2)$ para matrizes densas).
+2. Realizamos um percurso de Pré-Ordem (DFS) pela MST, o que garante a visita a todos os vértices.
+3. Transformamos a rota da DFS num ciclo, "pulando" vértices já visitados (\textit{shortcutting}).
+\\
+\textbf{Garantia Teórica:} Como a MST é menor ou igual ao ciclo ótimo (já que o ciclo ótimo menos uma aresta é uma árvore geradora), e o percurso pela árvore ao dobrar as arestas equivale a no máximo $2 \times$ a MST, garantimos que o custo final nunca excederá o dobro do ótimo ($C \leq 2 \times C_{opt}$), contanto que o grafo respeite a \textbf{Desigualdade Triangular}.
+
+\subsection{Resultados e Discussão em Larga Escala}
+
+Os testes foram executados sobre três matrizes de adjacência disponibilizadas: \texttt{si535.tsp}, \texttt{pa561.tsp} e \texttt{si1032.tsp}. Os resultados obtidos em nosso sistema estão descritos na Tabela \ref{tab:heuristica}.
+
+\begin{table}[H]
+    \centering
+    \caption{Comparativo Heurística (NN) vs. Aproximado (MST) para grandes instâncias}
+    \label{tab:heuristica}
+    \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{Instância} & \textbf{Tamanho ($n$)} & \textbf{Custo NN} & \textbf{Custo MST} & \textbf{Razão (NN / MST)} \\ \midrule
+    si535  & 535  & 50.144 & 52.034 & 0,9637 \\
+    pa561  & 561  & 3.422  & 3.868  & 0,8847 \\
+    si1032 & 1032 & 94.571 & 98.249 & 0,9626 \\ \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Análise Crítica dos Resultados:}
+Ao analisar a Tabela \ref{tab:heuristica}, percebemos um fenômeno interessante: a razão (NN / MST) é menor que 1. Isso indica que a \textbf{Heurística do Vizinho Mais Próximo gerou rotas de custo inferior (melhores) do que a solução com garantia do MST} em todas as instâncias avaliadas.
+
+Como isso é possível se o MST é um algoritmo de aproximação validado?
+1. \textbf{Média vs Pior Caso:} A garantia da MST de fator de aproximação igual a $2$ significa que o pior resultado não será pior que o dobro do ótimo. Trata-se de uma garantia matemática de \textbf{pior caso}.
+2. \textbf{Comportamento Prático:} Em instâncias que imitam geografias reais e exibem clusters densos e estruturados espacialmente, a busca gulosa simples do Vizinho Mais Próximo costuma fluir bem na média, embora possa falhar catastroficamente em grafos perversamente arquitetados (onde seu erro é na ordem de $\log n$).
+3. O algoritmo da MST realiza saltos longos durante a fase de \textit{shortcutting} na pré-ordem da árvore. Sem algoritmos adicionais de polimento local (como o método de Christofides, ou otimizações locais 2-opt/3-opt em pós-processamento), o atalho introduz custos desnecessários que o Vizinho Mais Próximo, na sua miopia, acaba contornando nessas instâncias específicas.
+
+\section{Conclusão}
+
+O presente trabalho prático consolidou uma visão profunda e escalonada do Problema do Caixeiro Viajante. Ficou demonstrado de forma empírica que tentar resolver NP-Problemas via força bruta resulta num colapso temporal devido à complexidade $O(n!)$, impossibilitando o uso para $n > 15$.
+
+Através da modelagem de metodologias sub-ótimas mas tratáveis, confirmamos que é possível encontrar respostas razoáveis para ordens de grandeza de até $n=1.032$ em tempo imperceptível. A contraposição entre o Vizinho Mais Próximo (um modelo prático, sem garantia no pior caso) e o baseado em MST (com garantia de limite superior), revelou o \textit{trade-off} contínuo na ciência da computação: heurísticas gulosas podem encontrar soluções melhores no caso médio, enquanto algoritmos formais de aproximação oferecem segurança matemática e resiliência contra o pior caso, evitando anomalias graves no sistema.
+
+Para aplicações no mundo real que exijam mais precisão a partir dessas instâncias geradas, o conhecimento derivado aponta para abordagens híbridas (meta-heurísticas), nas quais se inicia a construção com um dos métodos acima e aplica-se refinamento local sucessivo.
+
+\end{document}
