@@ -15,16 +15,20 @@ Módulos implementados
 
 Uso
 ---
-  python tsp_solver.py               # demonstração completa
-  python tsp_solver.py si535.tsp upper  # roda nas instâncias do Moodle
+  Coloque este arquivo na MESMA pasta que si535.tsp, pa561.tsp e
+  si1032.tsp, depois execute:
+
+      python tsp_solver.py
+
+  Saídas geradas em ./output/:
+      grafico_forca_bruta.png   — gráfico pedido na Parte 1
+      resultados.txt            — tabelas prontas para colar no relatório
 """
 
 import itertools
 import math
-import heapq
 import time
 import os
-import sys
 from typing import List, Tuple, Dict, Optional
 
 import numpy as np
@@ -80,6 +84,16 @@ def custo_tour(dist: np.ndarray, rota: List[int]) -> int:
     return int(dist[r, np.roll(r, -1)].sum())
 
 
+def validar_rota(rota: List[int], n: int) -> None:
+    """
+    Confere que a rota é um ciclo hamiltoniano válido: visita as n
+    cidades exatamente uma vez cada. Levanta AssertionError se não for.
+    """
+    assert len(rota) == n, f"rota tem {len(rota)} cidades, esperado {n}"
+    assert len(set(rota)) == n, "rota contém cidade(s) repetida(s)"
+    assert set(rota) == set(range(n)), "rota não cobre todas as cidades 0..n-1"
+
+
 # ══════════════════════════════════════════════════════════════
 #  SEÇÃO 1 — FORÇA BRUTA
 # ══════════════════════════════════════════════════════════════
@@ -132,16 +146,31 @@ def forca_bruta(dist: np.ndarray) -> Tuple[int, List[int]]:
     return int(melhor_custo), melhor_rota
 
 
-def executar_parte1(n_max: int = 13, timeout: float = 90.0) -> Dict:
+def executar_parte1(n_max: int = 16, timeout: float = 90.0) -> Dict:
     """
     Executa a Parte 1: aplica força bruta em instâncias de n = 2 até
-    n_max (ou até estourar o timeout), medindo o tempo de cada execução.
+    n_max (ou até a estimativa de tempo da PRÓXIMA instância ultrapassar
+    o timeout), medindo o tempo de cada execução.
+
+    Ajuste em relação à versão anterior
+    ------------------------------------
+    A versão anterior só verificava o timeout DEPOIS de rodar — o que
+    significa que, se n=12 leva 1 minuto, ela ainda tentaria n=13 (que
+    levaria ~12× mais, ou seja, ~12 minutos) e só então abortaria.
+
+    Esta versão estima o tempo do PRÓXIMO n antes de rodá-lo, usando a
+    relação (n-1)! = (n-2)! × (n-1), ou seja:
+
+        tempo_estimado(n) ≈ tempo_medido(n-1) × (n-1)
+
+    Se a estimativa já ultrapassa o timeout, a instância nem é
+    iniciada. Isso é independente da velocidade da sua máquina —
+    a guarda se adapta automaticamente ao hardware.
 
     Parâmetros
     ----------
     n_max   : tamanho máximo da instância a tentar
-    timeout : para automaticamente se uma instância levar mais de
-              `timeout` segundos
+    timeout : teto de tempo (s) para a PRÓXIMA instância estimada
 
     Retorno
     -------
@@ -155,24 +184,31 @@ def executar_parte1(n_max: int = 13, timeout: float = 90.0) -> Dict:
     print("  " + "─" * 48)
 
     resultado: Dict = {'n': [], 't': [], 'custo': []}
+    tempo_anterior: Optional[float] = None
 
     for n in range(2, n_max + 1):
+        # ── Guarda preditiva: estima ANTES de rodar ─────────────────
+        if tempo_anterior is not None:
+            estimado = tempo_anterior * (n - 1)
+            if estimado > timeout:
+                print(f"  → Estimativa para n={n} é {estimado:.1f}s "
+                      f"(> timeout de {timeout}s). Parando em n = {n - 1}.")
+                break
+
         dist = gerar_instancia(n, seed=100 + n)
 
         t0 = time.perf_counter()
-        custo, _ = forca_bruta(dist)
+        custo, rota = forca_bruta(dist)
         dt = time.perf_counter() - t0
+        validar_rota(rota, n)
 
         perms = math.factorial(n - 1)
         resultado['n'].append(n)
         resultado['t'].append(dt)
         resultado['custo'].append(custo)
+        tempo_anterior = dt
 
         print(f"  {n:>4}  {perms:>13,}  {dt:>12.6f}  {custo:>13,}")
-
-        if dt > timeout:
-            print(f"  → Tempo limite ({timeout}s) atingido. Parando em n = {n}.")
-            break
 
     return resultado
 
@@ -323,8 +359,8 @@ def aproximado_mst(dist: np.ndarray) -> Tuple[int, List[int]]:
        (custo_MST ≤ custo_OPT, pois remover uma aresta do tour ótimo
         gera uma árvore geradora)
     2. Faz a travessia em pré-ordem da MST.
-       (cada aresta da MST é percorrida no máximo 2 vezes na travessia
-        eulerianaθ; o atalho pré-ordem usa a desigualdade triangular)
+       (a travessia "atalha" arestas repetidas usando a desigualdade
+        triangular, sem nunca aumentar o custo)
     3. A sequência de visita forma o tour aproximado.
 
     Garantia teórica
@@ -354,72 +390,116 @@ def aproximado_mst(dist: np.ndarray) -> Tuple[int, List[int]]:
 
 
 # ══════════════════════════════════════════════════════════════
-#  SEÇÃO 4 — PARSERS PARA ARQUIVOS .TSP (MEIA-MATRIZ)
+#  SEÇÃO 4 — PARSER TSPLIB (EDGE_WEIGHT_TYPE: EXPLICIT)
 # ══════════════════════════════════════════════════════════════
 
-def parse_half_matrix(filepath: str, triangulo: str) -> np.ndarray:
+def parse_tsplib_explicit(filepath: str) -> Tuple[np.ndarray, int, str]:
     """
-    Lê um arquivo .tsp contendo uma meia-matriz de adjacência e
-    reconstrói a matriz simétrica completa.
+    Lê um arquivo no formato TSPLIB com EDGE_WEIGHT_TYPE: EXPLICIT e
+    reconstrói a matriz de distâncias simétrica completa.
 
-    Formato esperado
-    ----------------
-    O arquivo contém apenas os valores numéricos inteiros separados
-    por espaços e/ou quebras de linha, sem cabeçalho.
+    Por que não basta ler todos os números do arquivo
+    ----------------------------------------------------
+    1. O arquivo tem um CABEÇALHO textual (NAME, TYPE, DIMENSION, ...)
+       que não pode ser convertido para número.
+    2. O formato real usado nestas instâncias é UPPER_DIAG_ROW ou
+       LOWER_DIAG_ROW — ou seja, a diagonal (sempre zero) está
+       INCLUÍDA nos dados. O total de valores é n(n+1)/2, não
+       n(n-1)/2 como uma meia-matriz "pura" teria.
+    3. Em alguns arquivos (ex.: pa561.tsp) existe uma SEGUNDA seção
+       depois da matriz de distâncias (DISPLAY_DATA_SECTION, com
+       coordenadas x,y de cada cidade para fins de plotagem). Esses
+       números NÃO são distâncias — se forem lidos junto, a matriz
+       fica corrompida.
 
-    Diagonal SUPERIOR (si535.tsp, si1032.tsp):
-        d[0][1], d[0][2], ..., d[0][n-1],
-        d[1][2], d[1][3], ..., d[1][n-1],
-        ...
-        d[n-2][n-1]
-        Total: n*(n-1)/2 valores
-
-    Diagonal INFERIOR (pa561.tsp):
-        d[1][0],
-        d[2][0], d[2][1],
-        ...
-        d[n-1][0], d[n-1][1], ..., d[n-1][n-2]
-        Total: n*(n-1)/2 valores
+    Esta função resolve os três pontos: localiza DIMENSION e
+    EDGE_WEIGHT_FORMAT no cabeçalho, encontra o início de
+    EDGE_WEIGHT_SECTION e lê exatamente n(n+1)/2 valores a partir
+    daí — nem um a menos, nem um a mais.
 
     Parâmetros
     ----------
-    filepath  : caminho do arquivo .tsp
-    triangulo : 'upper' (diagonal superior) ou 'lower' (diagonal inferior)
+    filepath : caminho do arquivo .tsp
 
     Retorno
     -------
-    dist : ndarray(n, n) int64 simétrica com zeros na diagonal
+    (dist, n, formato)
+        dist     : ndarray(n, n) int64, simétrica, diagonal zero
+        n        : número de cidades (lido de DIMENSION)
+        formato  : 'upper' ou 'lower' (lido de EDGE_WEIGHT_FORMAT)
     """
     with open(filepath, 'r') as f:
-        vals = np.array(f.read().split(), dtype=np.int64)
+        raw_lines = f.readlines()
 
-    total = len(vals)
-    # Resolve: n*(n-1)/2 = total  ⟹  n² - n - 2*total = 0
-    n = int(round((1.0 + math.sqrt(1.0 + 8.0 * total)) / 2.0))
-    assert n * (n - 1) // 2 == total, (
-        f"O arquivo tem {total} valores, que não corresponde a nenhuma "
-        f"meia-matriz quadrada. Verifique o formato."
-    )
+    n: Optional[int] = None
+    formato: Optional[str] = None
+    inicio_secao: Optional[int] = None
 
+    for i, linha in enumerate(raw_lines):
+        chave = linha.strip().upper()
+        if chave.startswith('DIMENSION'):
+            n = int(linha.split(':')[1].strip())
+        elif chave.startswith('EDGE_WEIGHT_FORMAT'):
+            valor = linha.split(':')[1].strip().upper()
+            if 'UPPER' in valor:
+                formato = 'upper'
+            elif 'LOWER' in valor:
+                formato = 'lower'
+            else:
+                raise ValueError(
+                    f"{filepath}: EDGE_WEIGHT_FORMAT '{valor}' não suportado "
+                    f"(esperado algo com UPPER ou LOWER)."
+                )
+        elif chave.startswith('EDGE_WEIGHT_SECTION'):
+            inicio_secao = i + 1
+            break  # já temos tudo que precisamos do cabeçalho
+
+    if n is None or formato is None or inicio_secao is None:
+        raise ValueError(
+            f"{filepath}: cabeçalho TSPLIB incompleto — verifique se há "
+            f"DIMENSION, EDGE_WEIGHT_FORMAT e EDGE_WEIGHT_SECTION."
+        )
+
+    # *_DIAG_ROW inclui a diagonal: total = n + (n-1) + ... + 1 = n(n+1)/2
+    total_necessario = n * (n + 1) // 2
+
+    # Lê tokens a partir da seção, mas PARA assim que atingir o total
+    # esperado — isso ignora automaticamente qualquer seção extra
+    # (como a DISPLAY_DATA_SECTION do pa561.tsp) e o marcador EOF.
+    tokens: List[str] = []
+    for linha in raw_lines[inicio_secao:]:
+        tokens.extend(linha.split())
+        if len(tokens) >= total_necessario:
+            break
+    tokens = tokens[:total_necessario]
+
+    if len(tokens) != total_necessario:
+        raise ValueError(
+            f"{filepath}: esperados {total_necessario} valores "
+            f"({formato}_diag_row, n={n}), mas encontrados {len(tokens)}. "
+            f"Verifique se o arquivo não está truncado."
+        )
+
+    vals = np.array(tokens, dtype=np.int64)
     dist = np.zeros((n, n), dtype=np.int64)
     idx = 0
 
-    if triangulo == 'upper':
-        # Preenche triangulo superior e reflete
+    if formato == 'upper':
+        # UPPER_DIAG_ROW: linha i contém d[i][i], d[i][i+1], ..., d[i][n-1]
         for i in range(n):
-            for j in range(i + 1, n):
+            for j in range(i, n):
                 dist[i, j] = vals[idx]
                 dist[j, i] = vals[idx]
                 idx += 1
-    else:  # 'lower'
-        # Preenche triângulo inferior e reflete
-        for i in range(1, n):
-            for j in range(i):
+    else:
+        # LOWER_DIAG_ROW: linha i contém d[i][0], d[i][1], ..., d[i][i]
+        for i in range(n):
+            for j in range(i + 1):
                 dist[i, j] = vals[idx]
                 dist[j, i] = vals[idx]
                 idx += 1
 
-    return dist
+    return dist, n, formato
 
 
 # ══════════════════════════════════════════════════════════════
@@ -453,8 +533,8 @@ def plotar_crescimento(dados: Dict, output_path: str) -> None:
     # ── Paleta de cores ───────────────────────────────────────────────
     C_MED = '#1E40AF'    # azul escuro — dados medidos
     C_TEO = '#F59E0B'    # âmbar      — curva teórica
-    C_BG  = '#F8FAFC'   # cinza muito claro — fundo
-    C_PT  = '#64748B'   # cinza médio — anotações
+    C_BG = '#F8FAFC'     # cinza muito claro — fundo
+    C_PT = '#64748B'     # cinza médio — anotações
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6),
                                     facecolor=C_BG)
@@ -473,30 +553,30 @@ def plotar_crescimento(dados: Dict, output_path: str) -> None:
     ax1.set_xlabel('Número de cidades (n)', fontsize=12, color='#334155')
     ax1.set_ylabel('Tempo de execução (s)', fontsize=12, color='#334155')
     ax1.set_title('Escala Linear', fontsize=13, fontweight='bold',
-                  color='#1E293B', pad=10)
+                   color='#1E293B', pad=10)
     ax1.grid(True, alpha=0.2, linestyle='--', color='#94A3B8')
     ax1.set_xticks(ns)
 
     # Anota cada ponto com o tempo medido
     for x, y in zip(ns, ts):
         ax1.annotate(f'{y:.4f}s', (x, y),
-                     textcoords='offset points', xytext=(0, 10),
-                     ha='center', fontsize=7.5, color=C_PT)
+                      textcoords='offset points', xytext=(0, 10),
+                      ha='center', fontsize=7.5, color=C_PT)
 
     # ── Subplot 2: escala log ─────────────────────────────────────────
     ts_safe = np.maximum(ts, 1e-9)
     teo_safe = [max(t, 1e-12) for t in teorico]
 
     ax2.semilogy(ns, ts_safe, 'o-', color=C_MED, lw=2.5, ms=8,
-                 mfc='white', mew=2.5, zorder=3, label='Tempo medido')
+                  mfc='white', mew=2.5, zorder=3, label='Tempo medido')
     ax2.semilogy(ns, teo_safe, '--', color=C_TEO, lw=2, alpha=0.9,
-                 label='Teórico  O((n-1)!)')
+                  label='Teórico  O((n-1)!)')
 
     ax2.set_xlabel('Número de cidades (n)', fontsize=12, color='#334155')
     ax2.set_ylabel('Tempo de execução (s)  [escala log]',
-                   fontsize=12, color='#334155')
+                    fontsize=12, color='#334155')
     ax2.set_title('Escala Logarítmica', fontsize=13, fontweight='bold',
-                  color='#1E293B', pad=10)
+                   color='#1E293B', pad=10)
     ax2.grid(True, alpha=0.2, linestyle='--', which='both', color='#94A3B8')
     ax2.set_xticks(ns)
     ax2.legend(fontsize=10, framealpha=0.7, edgecolor='#CBD5E1')
@@ -519,15 +599,16 @@ def plotar_crescimento(dados: Dict, output_path: str) -> None:
 #  SEÇÃO 6 — EXECUÇÃO PARTES 2 E 3
 # ══════════════════════════════════════════════════════════════
 
-def executar_partes_2_3(instancias: List[Tuple[str, str, str]]) -> List[Dict]:
+def executar_partes_2_3(instancias: List[Tuple[str, str]]) -> List[Dict]:
     """
     Executa a heurística (Parte 2) e o algoritmo aproximado (Parte 3)
     nas instâncias fornecidas, medindo o tempo de cada um.
 
     Parâmetros
     ----------
-    instancias : lista de tuplas (nome, caminho_arquivo, triangulo)
-                 triangulo = 'upper' ou 'lower'
+    instancias : lista de tuplas (nome, caminho_arquivo)
+                 O formato (upper/lower) é detectado automaticamente
+                 a partir do cabeçalho do próprio arquivo .tsp.
 
     Retorno
     -------
@@ -540,34 +621,31 @@ def executar_partes_2_3(instancias: List[Tuple[str, str, str]]) -> List[Dict]:
 
     resultados = []
 
-    for nome, caminho, triangulo in instancias:
-        print(f"\n  ▶  Instância: {nome}  [{triangulo} triangular]")
+    for nome, caminho in instancias:
+        print(f"\n  ▶  Instância: {nome}")
 
-        # Carrega a instância (arquivo real ou sintética para demo)
-        if os.path.exists(caminho):
-            print(f"     Lendo arquivo: {caminho}")
-            dist = parse_half_matrix(caminho, triangulo)
-        else:
-            # Arquivo não encontrado: gera instância sintética do mesmo tamanho
-            n_sintetico = {'si535': 535, 'pa561': 561,
-                           'si1032': 1032}.get(nome, 200)
-            print(f"     ⚠  Arquivo '{caminho}' não encontrado.")
-            print(f"     → Usando instância SINTÉTICA de {n_sintetico} cidades "
-                  f"(substitua pelo arquivo real do Moodle).")
-            dist = gerar_instancia(n_sintetico, seed=abs(hash(nome)) % (2**31))
+        if not os.path.exists(caminho):
+            raise FileNotFoundError(
+                f"Arquivo '{caminho}' não encontrado. Baixe-o do Moodle e "
+                f"coloque-o na mesma pasta deste script (ou ajuste o "
+                f"caminho na lista INSTANCIAS, no final do arquivo)."
+            )
 
-        n = dist.shape[0]
-        print(f"     Cidades: {n:,}")
+        dist, n, formato = parse_tsplib_explicit(caminho)
+        print(f"     Lido de '{caminho}'  —  n={n} cidades, "
+              f"formato detectado: {formato}_diag_row")
 
         # ── Parte 2: Heurística NN ───────────────────────────────────
         t0 = time.perf_counter()
         custo_nn, rota_nn = vizinho_mais_proximo(dist)
         t_nn = time.perf_counter() - t0
+        validar_rota(rota_nn, n)
 
         # ── Parte 3: Aproximado MST ──────────────────────────────────
         t0 = time.perf_counter()
         custo_mst, rota_mst = aproximado_mst(dist)
         t_mst = time.perf_counter() - t0
+        validar_rota(rota_mst, n)
 
         razao = custo_nn / custo_mst if custo_mst else float('inf')
 
@@ -600,25 +678,73 @@ def executar_partes_2_3(instancias: List[Tuple[str, str, str]]) -> List[Dict]:
 
 
 # ══════════════════════════════════════════════════════════════
+#  SEÇÃO 7 — RELATÓRIO TEXTUAL (para colar no relatório do Moodle)
+# ══════════════════════════════════════════════════════════════
+
+def escrever_resultados_txt(dados_p1: Dict, resultados_p23: List[Dict],
+                             output_path: str) -> None:
+    """
+    Escreve um arquivo de texto com as tabelas de resultados das três
+    partes, formatadas para serem coladas diretamente no relatório.
+    """
+    linhas = []
+    linhas.append("RESULTADOS — TRABALHO PRÁTICO TSP — AED2 — CEFET-MG")
+    linhas.append("=" * 60)
+    linhas.append("")
+    linhas.append("PARTE 1 — Força Bruta (instâncias aleatórias)")
+    linhas.append("-" * 60)
+    linhas.append(f"{'n':>4} {'(n-1)!':>14} {'tempo (s)':>12} {'custo':>10}")
+    for n, t, c in zip(dados_p1['n'], dados_p1['t'], dados_p1['custo']):
+        linhas.append(f"{n:>4} {math.factorial(n-1):>14,} {t:>12.6f} {c:>10,}")
+    linhas.append("")
+    linhas.append("PARTE 2 — Heurística (Vizinho Mais Próximo)")
+    linhas.append("PARTE 3 — Aproximado (MST, 2-aprox)")
+    linhas.append("-" * 60)
+    linhas.append(f"{'instância':>10} {'n':>6} {'NN':>14} {'MST':>14} {'razão':>8}")
+    for r in resultados_p23:
+        linhas.append(f"{r['nome']:>10} {r['n']:>6} {r['custo_nn']:>14,} "
+                       f"{r['custo_mst']:>14,} {r['razao']:>8.4f}")
+    linhas.append("")
+    linhas.append("Observação: razão = custo_NN / custo_MST. Quando razão < 1,")
+    linhas.append("a heurística NN encontrou um tour melhor que o aproximado")
+    linhas.append("nesta instância específica — isso NÃO contradiz a garantia")
+    linhas.append("teórica do MST (custo ≤ 2×OPT), que é um limite de PIOR caso,")
+    linhas.append("não uma promessa de que o MST sempre vence o NN.")
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(linhas))
+    print(f"  ✓ Resultados em texto salvos: {output_path}")
+
+
+# ══════════════════════════════════════════════════════════════
 #  PONTO DE ENTRADA
 # ══════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
-    OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'output')
+    OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # ── Parte 1 ────────────────────────────────────────────────────
-    dados_p1 = executar_parte1(n_max=13, timeout=90.0)
+    # n_max=16 é só um teto de segurança; a guarda preditiva dentro de
+    # executar_parte1 vai parar muito antes disso na prática (tipicamente
+    # entre n=11 e n=13, dependendo da velocidade da sua máquina).
+    # Para tentar ir mais longe, aumente TIMEOUT (em segundos).
+    dados_p1 = executar_parte1(n_max=16, timeout=90.0)
     plotar_crescimento(dados_p1,
-                       os.path.join(OUTPUT_DIR, 'grafico_forca_bruta.png'))
+                        os.path.join(OUTPUT_DIR, 'grafico_forca_bruta.png'))
 
     # ── Partes 2 e 3 ───────────────────────────────────────────────
-    # Coloque aqui os caminhos reais dos arquivos baixados do Moodle
+    # Os arquivos .tsp devem estar na mesma pasta deste script.
+    # O formato (upper/lower) é detectado automaticamente do cabeçalho.
     INSTANCIAS = [
-        ('si535',  'si535.tsp',  'upper'),
-        ('pa561',  'pa561.tsp',  'lower'),
-        ('si1032', 'si1032.tsp', 'upper'),
+        ('si535', 'si535.tsp'),
+        ('pa561', 'pa561.tsp'),
+        ('si1032', 'si1032.tsp'),
     ]
-    resultados = executar_partes_2_3(INSTANCIAS)
+    resultados_p23 = executar_partes_2_3(INSTANCIAS)
+
+    # ── Relatório textual ───────────────────────────────────────────
+    escrever_resultados_txt(dados_p1, resultados_p23,
+                             os.path.join(OUTPUT_DIR, 'resultados.txt'))
 
     print("\n  ✓ Execução concluída. Resultados em:", OUTPUT_DIR)

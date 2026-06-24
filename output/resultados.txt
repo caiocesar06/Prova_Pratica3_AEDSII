@@ -1,0 +1,31 @@
+RESULTADOS — TRABALHO PRÁTICO TSP — AED2 — CEFET-MG
+============================================================
+
+PARTE 1 — Força Bruta (instâncias aleatórias)
+------------------------------------------------------------
+   n         (n-1)!    tempo (s)      custo
+   2              1     0.000005        320
+   3              2     0.000018        572
+   4              6     0.000016      1,347
+   5             24     0.000029      2,544
+   6            120     0.000136      1,031
+   7            720     0.000920      1,431
+   8          5,040     0.006205      1,863
+   9         40,320     0.052340      1,787
+  10        362,880     0.505693      1,841
+  11      3,628,800     5.420292      2,101
+  12     39,916,800    62.551140      1,641
+
+PARTE 2 — Heurística (Vizinho Mais Próximo)
+PARTE 3 — Aproximado (MST, 2-aprox)
+------------------------------------------------------------
+ instância      n             NN            MST    razão
+     si535    535         50,144         52,034   0.9637
+     pa561    561          3,422          3,868   0.8847
+    si1032   1032         94,571         98,249   0.9626
+
+Observação: razão = custo_NN / custo_MST. Quando razão < 1,
+a heurística NN encontrou um tour melhor que o aproximado
+nesta instância específica — isso NÃO contradiz a garantia
+teórica do MST (custo ≤ 2×OPT), que é um limite de PIOR caso,
+não uma promessa de que o MST sempre vence o NN.
